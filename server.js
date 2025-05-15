@@ -1,4 +1,3 @@
-import "dotenv/config";
 import express from "express";
 import cors from "cors";
 import axios from "axios";
@@ -15,7 +14,7 @@ const port = 3000;
 
 app.use(
   cors({
-    origin: process.env.FRONTEND_URL,
+    origin: "http://localhost:3000",
     credentials: true,
   })
 );
@@ -28,11 +27,9 @@ app.get("/", (req, res) => {
 });
 
 app.get("/login", (req, res) => {
-  const authUrl = `${process.env.CASDOOR_URL}/login/oauth/authorize?client_id=${
-    process.env.CLIENT_ID
-  }&response_type=code&redirect_uri=${
-    process.env.REDIRECT_URI
-  }&scope=read&state=${Math.random().toString(36).substring(7)}`;
+  const authUrl = `http://localhost:8000/login/oauth/authorize?client_id=f1321b09fbe6305a0df3&response_type=code&redirect_uri=http://localhost:3000/callback&scope=read&state=${Math.random()
+    .toString(36)
+    .substring(7)}`;
   res.json({ url: authUrl });
 });
 
@@ -41,13 +38,13 @@ app.get("/callback", async (req, res) => {
 
   try {
     const tokenResponse = await axios.post(
-      `${process.env.CASDOOR_URL}/api/login/oauth/access_token`,
+      `http://localhost:8000/api/login/oauth/access_token`,
       {
-        client_id: process.env.CLIENT_ID,
-        client_secret: process.env.CLIENT_SECRET,
+        client_id: "f1321b09fbe6305a0df3",
+        client_secret: "6f4898678bf6306164eaf253dbe9b816a9b4cf24",
         code: code,
         grant_type: "authorization_code",
-        redirect_uri: process.env.REDIRECT_URI,
+        redirect_uri: "http://localhost:3000/callback",
       },
       {
         headers: {
@@ -69,7 +66,7 @@ app.get("/callback", async (req, res) => {
 
     res.cookie("casdoor_token", access_token, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
+      secure: "production",
       sameSite: "lax",
       maxAge: 24 * 60 * 60 * 1000,
     });
@@ -84,13 +81,13 @@ app.get("/callback", async (req, res) => {
       }),
       {
         httpOnly: true,
-        secure: process.env.NODE_ENV === "production",
+        secure: "production",
         sameSite: "lax",
         maxAge: 24 * 60 * 60 * 1000,
       }
     );
 
-    res.redirect(process.env.FRONTEND_URL);
+    res.redirect("http://localhost:3000");
   } catch (error) {
     console.error(
       "Error during token exchange:",
