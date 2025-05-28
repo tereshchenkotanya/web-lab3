@@ -1,0 +1,461 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Casdoor Auth Panel</title>
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            font-family: 'Segoe UI', sans-serif;
+            background: #ffffff;
+            color: #222;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: start;
+            min-height: 100vh;
+            padding: 40px 20px;
+        }
+
+        h1 {
+            margin-bottom: 2rem;
+            color: #000;
+            font-size: 2rem;
+            text-align: center;
+        }
+
+        .action-btn {
+            background: #0055cc;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            padding: 10px 18px;
+            margin: 0 10px 20px;
+            font-size: 15px;
+            cursor: pointer;
+            transition: background 0.2s ease, transform 0.1s ease;
+        }
+
+        .action-btn:hover:not(:disabled) {
+            background: #1a75ff;
+        }
+
+        .action-btn:disabled {
+            background: #dddddd;
+            color: #777;
+            cursor: not-allowed;
+        }
+
+        .info-box {
+            display: none;
+            background: #f9f9f9;
+            border: 1px solid #ccc;
+            border-radius: 8px;
+            padding: 20px;
+            min-width: 320px;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+        }
+
+        .info-item {
+            margin-bottom: 10px;
+            font-size: 15px;
+            display: flex;
+        }
+
+        .info-item span:first-child {
+            font-weight: bold;
+            color: #333;
+        }
+
+        .info-item span:last-child {
+            color: #555;
+        }
+
+        .crypto-box {
+            display: none;
+            background: #f0f8ff;
+            border: 1px solid #4CAF50;
+            border-radius: 8px;
+            padding: 20px;
+            margin-top: 20px;
+            min-width: 320px;
+        }
+
+        .crypto-info {
+            font-size: 16px;
+            margin: 10px 0;
+            padding: 10px;
+            border-radius: 4px;
+            border: 1px solid #ddd;
+            transition: border-color 0.3s ease;
+        }
+
+        .crypto-info.price-up {
+            border-color: #4CAF50;
+            background-color: rgba(76, 175, 80, 0.1);
+        }
+
+        .crypto-info.price-down {
+            border-color: #f44336;
+            background-color: rgba(244, 67, 54, 0.1);
+        }
+    </style>
+</head>
+
+<body>
+
+    <h1>Casdoor Authentication</h1>
+
+    <div>
+        <button id="loginBtn" class="action-btn">Log In</button>
+        <button id="infoBtn" class="action-btn">Get Info</button>
+        <button id="logoutBtn" class="action-btn">Log Out</button>
+        <button id="cryptoBtn" class="action-btn">Subscribe to Updates</button>
+    </div>
+
+    <div class="info-box" id="infoBox">
+        <div class="info-item"><span>ID:&nbsp;</span><span id="uid">-</span></div>
+        <div class="info-item"><span>Name:&nbsp;</span><span id="uname">-</span></div>
+        <div class="info-item"><span>Surname:&nbsp;</span><span id="usurname">-</span></div>
+        <div class="info-item"><span>Group:&nbsp;</span><span id="ugroup">-</span></div>
+    </div>
+
+    <div class="crypto-box" id="cryptoBox">
+        <h3>Cryptocurrency Updates</h3>
+        <div class="crypto-info" id="btcusdtInfo">
+            BTC: <span class="price-value">-</span> (<span class="timestamp">-</span>)
+        </div>
+        <div class="crypto-info" id="ethusdtInfo">
+            ETH: <span class="price-value">-</span> (<span class="timestamp">-</span>)
+        </div>
+        <div class="crypto-info" id="xrpusdtInfo">
+            XRP: <span class="price-value">-</span> (<span class="timestamp">-</span>)
+        </div>
+        <div class="crypto-info" id="dogeusdtInfo">
+            DOGE: <span class="price-value">-</span> (<span class="timestamp">-</span>)
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/protobufjs/dist/protobuf.min.js"></script>
+    <script>
+        const API = 'https://localhost:3000';
+        const WS_URL = 'wss://localhost:3000';
+        let authenticated = false;
+        let ws = null;
+        let isConnected = false;
+        let reconnectTimer = null;
+        let messageCount = 0;
+        let reconnectAttempts = 0;
+        const MAX_RECONNECT_ATTEMPTS = 5;
+
+        const loginBtn = document.getElementById('loginBtn');
+        const logoutBtn = document.getElementById('logoutBtn');
+        const infoBtn = document.getElementById('infoBtn');
+        const infoBox = document.getElementById('infoBox');
+        const cryptoBtn = document.getElementById('cryptoBtn');
+        const cryptoBox = document.getElementById('cryptoBox');
+
+        let lastPrices = {
+            btcusdt: 0,
+            ethusdt: 0,
+            xrpusdt: 0,
+            dogeusdt: 0
+        };
+
+        let lastColorChange = {
+            btcusdt: 0,
+            ethusdt: 0,
+            xrpusdt: 0,
+            dogeusdt: 0
+        };
+
+        let UserInfo = null;
+        let LogoutResponse = null;
+        let PriceChange = null;
+
+        protobuf.load("/user.proto", function (err, root) {
+            if (err) {
+                console.error("Failed to load protobuf schema:", err);
+                return;
+            }
+            UserInfo = root.lookupType("UserInfo");
+            LogoutResponse = root.lookupType("LogoutResponse");
+            PriceChange = root.lookupType("PriceChange");
+        });
+
+        const setText = (id, value) => document.getElementById(id).textContent = value || 'N/A';
+
+        const toggleButtons = () => {
+            loginBtn.disabled = authenticated;
+            logoutBtn.disabled = !authenticated;
+            cryptoBtn.disabled = !authenticated;
+        };
+
+        const renderUserBlock = ({ userId, name, surname, group }) => {
+            setText('uid', userId);
+            setText('uname', name);
+            setText('usurname', surname);
+            setText('ugroup', group);
+            infoBox.style.display = 'block';
+        };
+
+        const clearUserBlock = () => {
+            infoBox.style.display = 'none';
+        };
+
+        const fetchUserInfo = async () => {
+            if (!authenticated) {
+                alert('You must be logged in to view user info.');
+                return;
+            }
+            try {
+                const res = await fetch(`${API}/user-info`, { credentials: 'include' });
+                if (res.ok) {
+                    const arrayBuffer = await res.arrayBuffer();
+                    if (!UserInfo) {
+                        alert("Protobuf not loaded yet.");
+                        return;
+                    }
+                    const message = UserInfo.decode(new Uint8Array(arrayBuffer));
+                    renderUserBlock(message);
+                } else {
+                    alert('Failed to fetch user info.');
+                    clearUserBlock();
+                }
+            } catch (err) {
+                alert('Error fetching user info: ' + err.message);
+                clearUserBlock();
+            }
+        };
+
+        const handleLogin = async () => {
+            if (authenticated) return;
+            try {
+                const res = await fetch(`${API}/login`, {
+                    method: 'GET',
+                    credentials: 'include',
+                    headers: {
+                        'Accept': 'application/json'
+                    }
+                });
+
+                if (!res.ok) {
+                    throw new Error(`HTTP error! status: ${res.status}`);
+                }
+
+                const data = await res.json();
+                if (data.url) {
+                    location.href = data.url;
+                } else {
+                    throw new Error('No URL received from server');
+                }
+            } catch (err) {
+                alert('Login failed: ' + err.message);
+            }
+        };
+
+        const handleLogout = async () => {
+            if (!authenticated) return;
+            try {
+                const res = await fetch(`${API}/logout`, {
+                    method: 'POST',
+                    credentials: 'include'
+                });
+                if (res.ok) {
+                    const arrayBuffer = await res.arrayBuffer();
+                    if (!LogoutResponse) {
+                        alert("Protobuf not loaded yet.");
+                        return;
+                    }
+                    const message = LogoutResponse.decode(new Uint8Array(arrayBuffer));
+                    alert(message.message || "Logged out");
+                    authenticated = false;
+                    clearUserBlock();
+                    toggleButtons();
+                    if (ws) {
+                        ws.close();
+                        ws = null;
+                    }
+                    cryptoBox.style.display = 'none';
+                    cryptoBtn.textContent = 'Subscribe to Updates';
+                    isConnected = false;
+                } else {
+                    alert('Logout error');
+                }
+            } catch (err) {
+                alert('Logout failed: ' + err.message);
+            }
+        };
+
+        const updateCryptoPrice = (symbol, price, timestamp) => {
+            try {
+                const elementId = `${symbol}Info`;
+                const element = document.getElementById(elementId);
+
+                if (!element) {
+                    console.error(`Element not found for symbol: ${symbol}`);
+                    return;
+                }
+
+                const priceSpan = element.querySelector('.price-value');
+                const timestampSpan = element.querySelector('.timestamp');
+
+                if (!priceSpan || !timestampSpan) {
+                    console.error(`Price or timestamp span not found for ${symbol}`);
+                    return;
+                }
+
+                const newPrice = parseFloat(price);
+                const oldPrice = lastPrices[symbol] || 0;
+
+                priceSpan.textContent = `$${newPrice.toFixed(2)}`;
+
+                const now = Date.now();
+                const lastChange = lastColorChange[symbol] || 0;
+                const timeSinceLastChange = now - lastChange;
+
+                if (timeSinceLastChange >= 1000) {
+                    const newClass = newPrice > oldPrice ? 'price-up' : newPrice < oldPrice ? 'price-down' : '';
+                    element.className = 'crypto-info ' + newClass;
+                    lastColorChange[symbol] = now;
+                }
+
+                const date = new Date(Number(timestamp));
+                timestampSpan.textContent = date.toLocaleTimeString();
+                lastPrices[symbol] = newPrice;
+
+                cryptoBox.style.display = 'block';
+            } catch (error) {
+                console.error('Error in updateCryptoPrice:', error);
+            }
+        };
+
+        const connectWebSocket = () => {
+            if (!PriceChange) {
+                alert('Please wait for the application to initialize...');
+                return;
+            }
+
+            if (ws) {
+                ws.close();
+                ws = null;
+            }
+
+            if (reconnectTimer) {
+                clearTimeout(reconnectTimer);
+                reconnectTimer = null;
+            }
+
+            try {
+                ws = new WebSocket(WS_URL);
+                ws.binaryType = "arraybuffer";
+
+                ws.onopen = () => {
+                    isConnected = true;
+                    messageCount = 0;
+                    cryptoBox.style.display = 'block';
+                    cryptoBtn.textContent = 'Unsubscribe from Updates';
+                };
+
+                ws.onerror = (error) => {
+                    isConnected = false;
+                };
+
+                ws.onclose = (event) => {
+                    isConnected = false;
+                    cryptoBtn.textContent = 'Subscribe to Updates';
+                    cryptoBox.style.display = 'none';
+
+                    if (event.code === 1008) {
+                        alert('Session expired. Please log in again.');
+                        authenticated = false;
+                        toggleButtons();
+                        return;
+                    }
+                };
+
+                ws.onmessage = (event) => {
+                    try {
+                        if (!PriceChange) return;
+
+                        const buffer = new Uint8Array(event.data);
+                        const message = PriceChange.decode(buffer);
+
+                        if (!message || !message.symbol || !message.price || !message.timestamp) {
+                            console.error('Invalid message format:', message);
+                            return;
+                        }
+
+                        updateCryptoPrice(message.symbol, message.price, message.timestamp);
+                        messageCount++;
+                    } catch (error) {
+                        console.error('Error processing message:', error);
+                    }
+                };
+            } catch (error) {
+            }
+        };
+
+        const subscribeToBinance = async () => {
+            if (!authenticated) {
+                alert('You must be logged in to subscribe to crypto updates.');
+                return;
+            }
+
+            if (isConnected) {
+                if (ws) {
+                    ws.close();
+                    ws = null;
+                }
+                cryptoBox.style.display = 'none';
+                cryptoBtn.textContent = 'Subscribe to Updates';
+                isConnected = false;
+                return;
+            }
+
+            try {
+                reconnectAttempts = 0;
+                connectWebSocket();
+                cryptoBtn.textContent = 'Unsubscribe from Updates';
+            } catch (err) {
+                alert('Failed to connect to crypto updates: ' + err.message);
+            }
+        };
+
+        const checkAuthStatus = async () => {
+            try {
+                const res = await fetch(`${API}/user-info`, { credentials: 'include' });
+                authenticated = res.ok;
+            } catch {
+                authenticated = false;
+            } finally {
+                toggleButtons();
+            }
+        };
+
+        loginBtn.addEventListener('click', handleLogin);
+        logoutBtn.addEventListener('click', handleLogout);
+        infoBtn.addEventListener('click', fetchUserInfo);
+        cryptoBtn.addEventListener('click', subscribeToBinance);
+        window.addEventListener('load', checkAuthStatus);
+
+        window.addEventListener('beforeunload', () => {
+            if (ws) {
+                ws.close();
+                ws = null;
+            }
+            if (reconnectTimer) {
+                clearTimeout(reconnectTimer);
+                reconnectTimer = null;
+            }
+        });
+    </script>
+</body>
+
+</html>

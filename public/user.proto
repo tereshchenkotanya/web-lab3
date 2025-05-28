@@ -1,0 +1,18 @@
+syntax = "proto3";
+
+message PriceChange {
+  string symbol = 1;
+  string price = 2;
+  int64 timestamp = 3;
+}
+
+message UserInfo {
+  string userId = 1;
+  string name = 2;
+  string surname = 3;
+  string group = 4;
+}
+
+message LogoutResponse {
+  string message = 1;
+}
